@@ -15,12 +15,7 @@ import {
   X,
   Plus,
   Zap,
-  Check,
-  Volume2,
   RefreshCw,
-  Flame,
-  Layers,
-  ChevronRight,
 } from "lucide-react";
 import { djFx } from "@/lib/dj-audio-fx";
 
@@ -59,18 +54,17 @@ export default function AutoDjPlayer({
   isGenerating,
   onTracksChange,
 }: AutoDjPlayerProps) {
-  // Local tracklist that can receive dynamic live additions from YouTube search
+  // Repertoire tracklist
   const [localTracks, setLocalTracks] = useState<AutoAuxTrack[]>(initialTracks);
 
-  // Independent track indexing for Deck A & Deck B
+  // Deck Indexing: Deck A & Deck B
   const [deckATrackIdx, setDeckATrackIdx] = useState(0);
   const [deckBTrackIdx, setDeckBTrackIdx] = useState(1);
   const [activeDeck, setActiveDeck] = useState<"A" | "B">("A");
 
-  const [isPlaying, setIsPlaying] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [playFullSong, setPlayFullSong] = useState(false);
-  const [currentTimeA, setCurrentTimeA] = useState(0);
-  const [currentTimeB, setCurrentTimeB] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
   const [hasStartedPlayback, setHasStartedPlayback] = useState(false);
 
   // Mobile viewport tab selector (Deck A vs Deck B view on small screens)
@@ -79,9 +73,9 @@ export default function AutoDjPlayer({
   // Crossfade state
   const [crossfader, setCrossfader] = useState<number>(0); // 0 = 100% Deck A, 100 = 100% Deck B
   const [isCrossfading, setIsCrossfading] = useState(false);
-  const [crossfadeSec, setCrossfadeSec] = useState(2); // Snappy 2-second crossfade
+  const crossfadeSec = 2; // Fast, punchy 2-second crossfade window
 
-  // Ceremony category tabs & local search
+  // Queue category tabs & local search
   const [filterCategory, setFilterCategory] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
@@ -92,29 +86,29 @@ export default function AutoDjPlayer({
   const [ytSearchResults, setYtSearchResults] = useState<any[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Background YouTube player refs (Audio Only engines)
-  const playerRefA = useRef<any>(null);
-  const playerRefB = useRef<any>(null);
-  const crossfadeTimerRef = useRef<any>(null);
+  // Single Master Player Engine Ref (100% mobile audio lock immunity)
+  const playerRef = useRef<any>(null);
+  const isCrossfadingRef = useRef(false);
+  const crossfadeAnimationRef = useRef<any>(null);
   const toastTimeoutRef = useRef<any>(null);
 
-  // Sync internal tracklist when props update
+  // Synchronize internal tracklist when parent props update
   useEffect(() => {
     setLocalTracks(initialTracks);
     setDeckATrackIdx(0);
     setDeckBTrackIdx(initialTracks.length > 1 ? 1 : 0);
     setActiveDeck("A");
     setCrossfader(0);
+    isCrossfadingRef.current = false;
     setIsCrossfading(false);
     setPlayFullSong(false);
   }, [initialTracks]);
 
-  // Keep mobile deck tab in sync with broadcasting deck
+  // Keep mobile tab aligned with the broadcasting deck
   useEffect(() => {
     setMobileDeckTab(activeDeck);
   }, [activeDeck]);
 
-  // Helper to show temporary toasts
   const showToast = useCallback((msg: string) => {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     setToastMessage(msg);
@@ -127,184 +121,97 @@ export default function AutoDjPlayer({
   const trackA = localTracks[deckATrackIdx] || localTracks[0];
   const trackB = localTracks[deckBTrackIdx] || localTracks[1] || localTracks[0];
   const activeTrack = activeDeck === "A" ? trackA : trackB;
-  const cuedTrack = activeDeck === "A" ? trackB : trackA;
   const currentActiveIdx = activeDeck === "A" ? deckATrackIdx : deckBTrackIdx;
 
-  // Duration in seconds (1 to 2 mins: 80s to 120s)
+  // Active hook timing
   const activeHookDuration = activeTrack?.hookDuration || 95;
   const activeHookEnd = (activeTrack?.hookStart || 0) + activeHookDuration;
-  const activeCurrentTime = activeDeck === "A" ? currentTimeA : currentTimeB;
-  const remainingSec = Math.max(0, Math.ceil(activeHookEnd - activeCurrentTime));
+  const remainingSec = Math.max(0, Math.ceil(activeHookEnd - currentTime));
 
-  // Detect Mobile / Touch devices
-  const checkIsMobile = useCallback(() => {
-    if (typeof window === "undefined") return false;
-    return (
-      "ontouchstart" in window ||
-      navigator.maxTouchPoints > 0 ||
-      /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent) ||
-      window.innerWidth < 768
-    );
-  }, []);
-
-  // ==========================================================
-  // MOBILE-OPTIMIZED INSTANT SMOOTH CROSSFADE
-  // ==========================================================
+  // =========================================================================
+  // FAIL-SAFE UNSTOPPABLE CROSSFADE ENGINE (WORKS AUTOMATICALLY ON ALL PHONES)
+  // =========================================================================
   const triggerCrossfade = useCallback(() => {
-    if (isCrossfading || localTracks.length < 2) return;
+    if (isCrossfadingRef.current || localTracks.length < 2) return;
 
+    isCrossfadingRef.current = true;
     setIsCrossfading(true);
-    djFx.playLaser(); // Harmonic transition chime
 
+    // 1. Play tactile transition sound accent
+    djFx.playLaser();
+
+    // 2. Identify the target deck and song
     const targetDeck = activeDeck === "A" ? "B" : "A";
     const targetTrack = targetDeck === "A" ? trackA : trackB;
-    const isMobile = checkIsMobile();
 
-    // ON MOBILE PHONES:
-    // iOS and Android mobile browsers restrict simultaneous unmuted iframe playback.
-    // To prevent the dreaded 4-second silence and manual resume freeze, we use
-    // the currently active, unlocked audio engine to immediately load the next song
-    // while playing a seamless DJ transition sound effect!
-    if (isMobile) {
-      djFx.playVinylScratch();
-
-      const activePlayer = activeDeck === "A" ? playerRefA.current : playerRefB.current;
-      if (activePlayer && targetTrack) {
-        try {
-          activePlayer.loadVideoById({
-            videoId: targetTrack.videoId,
-            startSeconds: targetTrack.hookStart || 0,
-          });
-          activePlayer.setVolume(100);
-          activePlayer.playVideo();
-        } catch (err) {
-          console.warn("Mobile playback switch:", err);
-        }
-      }
-
-      // Smooth visual crossfader animation
-      const durationMs = 800;
-      const startTime = Date.now();
-      const startVal = crossfader;
-      const endVal = targetDeck === "B" ? 100 : 0;
-
-      const animateSlider = () => {
-        const elapsed = Date.now() - startTime;
-        const progress = Math.min(1, elapsed / durationMs);
-        setCrossfader(Math.round(startVal + (endVal - startVal) * progress));
-
-        if (progress < 1) {
-          requestAnimationFrame(animateSlider);
-        } else {
-          setActiveDeck(targetDeck);
-          if (targetDeck === "A") {
-            const nextIdx = (deckATrackIdx + 1) % localTracks.length;
-            setDeckBTrackIdx(nextIdx);
-            setCrossfader(0);
-          } else {
-            const nextIdx = (deckBTrackIdx + 1) % localTracks.length;
-            setDeckATrackIdx(nextIdx);
-            setCrossfader(100);
-          }
-          setIsCrossfading(false);
-          setIsPlaying(true);
-        }
-      };
-      requestAnimationFrame(animateSlider);
+    if (!targetTrack) {
+      isCrossfadingRef.current = false;
+      setIsCrossfading(false);
       return;
     }
 
-    // ON DESKTOP BROWSERS:
-    // Smooth 2-second dual-deck crossfade between Player A and Player B
-    const outgoingPlayer = activeDeck === "A" ? playerRefA.current : playerRefB.current;
-    const incomingPlayer = targetDeck === "A" ? playerRefA.current : playerRefB.current;
-
-    if (incomingPlayer && targetTrack) {
+    // 3. Immediately command the master audio engine to transition
+    if (playerRef.current) {
       try {
-        incomingPlayer.seekTo(targetTrack.hookStart || 0, true);
-        incomingPlayer.setVolume(0);
-        incomingPlayer.playVideo();
+        playerRef.current.loadVideoById({
+          videoId: targetTrack.videoId,
+          startSeconds: targetTrack.hookStart || 0,
+        });
+        playerRef.current.setVolume(100);
+        playerRef.current.playVideo();
       } catch (err) {
-        console.warn("Incoming player error:", err);
+        console.warn("Crossfade loadVideoById error:", err);
       }
     }
 
-    const steps = 20;
-    const intervalMs = (crossfadeSec * 1000) / steps;
-    let step = 0;
+    // 4. Smooth visual animation of the knurled crossfader slider
+    const durationMs = 700;
+    const startTime = Date.now();
+    const startVal = crossfader;
+    const endVal = targetDeck === "B" ? 100 : 0;
 
-    if (crossfadeTimerRef.current) clearInterval(crossfadeTimerRef.current);
+    const animateSlider = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(1, elapsed / durationMs);
+      setCrossfader(Math.round(startVal + (endVal - startVal) * progress));
 
-    crossfadeTimerRef.current = setInterval(() => {
-      step++;
-      const progress = step / steps; // 0.0 -> 1.0
-
-      if (activeDeck === "A") {
-        const volA = Math.round((1 - progress) * 100);
-        const volB = Math.round(progress * 100);
-        try {
-          outgoingPlayer?.setVolume(volA);
-          incomingPlayer?.setVolume(volB);
-        } catch {}
-        setCrossfader(Math.round(progress * 100));
+      if (progress < 1) {
+        crossfadeAnimationRef.current = requestAnimationFrame(animateSlider);
       } else {
-        const volB = Math.round((1 - progress) * 100);
-        const volA = Math.round(progress * 100);
-        try {
-          outgoingPlayer?.setVolume(volB);
-          incomingPlayer?.setVolume(volA);
-        } catch {}
-        setCrossfader(Math.round((1 - progress) * 100));
-      }
-
-      if (step >= steps) {
-        clearInterval(crossfadeTimerRef.current);
-        try {
-          outgoingPlayer?.pauseVideo();
-        } catch {}
-
-        if (activeDeck === "A") {
-          setActiveDeck("B");
-          setCrossfader(100);
-          const nextForDeckA = (deckBTrackIdx + 1) % localTracks.length;
-          setDeckATrackIdx(nextForDeckA);
-        } else {
-          setActiveDeck("A");
+        // Complete the deck switch
+        setActiveDeck(targetDeck);
+        if (targetDeck === "A") {
+          const nextIdx = (deckATrackIdx + 1) % localTracks.length;
+          setDeckBTrackIdx(nextIdx);
           setCrossfader(0);
-          const nextForDeckB = (deckATrackIdx + 1) % localTracks.length;
-          setDeckBTrackIdx(nextForDeckB);
+        } else {
+          const nextIdx = (deckBTrackIdx + 1) % localTracks.length;
+          setDeckATrackIdx(nextIdx);
+          setCrossfader(100);
         }
-
+        setIsPlaying(true);
+        isCrossfadingRef.current = false;
         setIsCrossfading(false);
       }
-    }, intervalMs);
-  }, [
-    activeDeck,
-    trackA,
-    trackB,
-    deckATrackIdx,
-    deckBTrackIdx,
-    isCrossfading,
-    localTracks.length,
-    crossfadeSec,
-    crossfader,
-    checkIsMobile,
-  ]);
+    };
 
-  // Polling loop for playback timing & auto-crossfade trigger
+    crossfadeAnimationRef.current = requestAnimationFrame(animateSlider);
+  }, [activeDeck, trackA, trackB, deckATrackIdx, deckBTrackIdx, localTracks.length, crossfader]);
+
+  // =========================================================================
+  // AUTOMATIC TRANSITION POLLING LOOP
+  // =========================================================================
   useEffect(() => {
     const timer = setInterval(async () => {
-      const activePlayer = activeDeck === "A" ? playerRefA.current : playerRefB.current;
-      if (!activePlayer || !activeTrack) return;
+      if (!playerRef.current || !activeTrack || isCrossfadingRef.current) return;
 
       try {
-        const now = await activePlayer.getCurrentTime();
+        const now = await playerRef.current.getCurrentTime();
         if (typeof now === "number") {
-          if (activeDeck === "A") setCurrentTimeA(now);
-          else setCurrentTimeB(now);
+          setCurrentTime(now);
 
-          // Auto-trigger crossfade 2 seconds before hook ends
-          if (!playFullSong && !isCrossfading && now >= activeHookEnd - crossfadeSec) {
+          // Auto-trigger crossfade when the active hook reaches its conclusion
+          if (!playFullSong && now >= activeHookEnd - crossfadeSec) {
             triggerCrossfade();
           }
         }
@@ -312,9 +219,11 @@ export default function AutoDjPlayer({
     }, 250);
 
     return () => clearInterval(timer);
-  }, [activeDeck, activeTrack, activeHookEnd, playFullSong, isCrossfading, crossfadeSec, triggerCrossfade]);
+  }, [activeTrack, activeHookEnd, playFullSong, crossfadeSec, triggerCrossfade]);
 
-  // User manually selects a track from the queue
+  // =========================================================================
+  // USER MANUAL DIRECT ACTIONS
+  // =========================================================================
   const selectTrackDirectly = (idx: number) => {
     const selected = localTracks[idx];
     if (!selected) return;
@@ -324,36 +233,26 @@ export default function AutoDjPlayer({
     if (activeDeck === "A") {
       setDeckATrackIdx(idx);
       setDeckBTrackIdx((idx + 1) % localTracks.length);
-      if (playerRefA.current) {
-        try {
-          playerRefA.current.loadVideoById({
-            videoId: selected.videoId,
-            startSeconds: selected.hookStart || 0,
-          });
-          playerRefA.current.setVolume(100);
-          playerRefA.current.playVideo();
-          setIsPlaying(true);
-        } catch {}
-      }
     } else {
       setDeckBTrackIdx(idx);
       setDeckATrackIdx((idx + 1) % localTracks.length);
-      if (playerRefB.current) {
-        try {
-          playerRefB.current.loadVideoById({
-            videoId: selected.videoId,
-            startSeconds: selected.hookStart || 0,
-          });
-          playerRefB.current.setVolume(100);
-          playerRefB.current.playVideo();
-          setIsPlaying(true);
-        } catch {}
-      }
     }
+
+    if (playerRef.current) {
+      try {
+        playerRef.current.loadVideoById({
+          videoId: selected.videoId,
+          startSeconds: selected.hookStart || 0,
+        });
+        playerRef.current.setVolume(100);
+        playerRef.current.playVideo();
+      } catch {}
+    }
+
+    setIsPlaying(true);
     setHasStartedPlayback(true);
   };
 
-  // Cue a track to the opposite deck without interrupting current playback
   const cueToNextDeck = (idx: number, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     const cued = localTracks[idx];
@@ -361,61 +260,41 @@ export default function AutoDjPlayer({
 
     if (activeDeck === "A") {
       setDeckBTrackIdx(idx);
-      if (playerRefB.current && !checkIsMobile()) {
-        try {
-          playerRefB.current.cueVideoById({
-            videoId: cued.videoId,
-            startSeconds: cued.hookStart || 0,
-          });
-        } catch {}
-      }
     } else {
       setDeckATrackIdx(idx);
-      if (playerRefA.current && !checkIsMobile()) {
-        try {
-          playerRefA.current.cueVideoById({
-            videoId: cued.videoId,
-            startSeconds: cued.hookStart || 0,
-          });
-        } catch {}
-      }
     }
-    djFx.playAirhorn();
+    djFx.playLaser();
     showToast(`Cued "${cued.title}" onto Deck ${activeDeck === "A" ? "B" : "A"}!`);
   };
 
-  // Toggle play / pause
   const togglePlay = () => {
-    const activePlayer = activeDeck === "A" ? playerRefA.current : playerRefB.current;
-    if (!activePlayer) return;
+    if (!playerRef.current) return;
     try {
       if (isPlaying) {
-        activePlayer.pauseVideo();
+        playerRef.current.pauseVideo();
         setIsPlaying(false);
       } else {
-        activePlayer.playVideo();
+        playerRef.current.playVideo();
         setIsPlaying(true);
         setHasStartedPlayback(true);
       }
     } catch {}
   };
 
-  // First touch unlock for mobile devices
   const handleMobileInitialStart = () => {
     djFx.playLaser();
-    const activePlayer = activeDeck === "A" ? playerRefA.current : playerRefB.current;
-    if (activePlayer) {
+    if (playerRef.current) {
       try {
-        activePlayer.playVideo();
+        playerRef.current.playVideo();
       } catch {}
     }
     setIsPlaying(true);
     setHasStartedPlayback(true);
   };
 
-  // ==========================================================
+  // =========================================================================
   // LIVE YOUTUBE SEARCH & ADD TO NEXT QUEUE
-  // ==========================================================
+  // =========================================================================
   const handleLiveYouTubeSearch = async (queryText: string) => {
     const q = queryText.trim();
     if (!q) return;
@@ -440,7 +319,6 @@ export default function AutoDjPlayer({
     }
   };
 
-  // Add song directly as NEXT UP in queue (right after current playing song)
   const addTrackToPlayNext = (track: any) => {
     const newTrack: AutoAuxTrack = {
       order: currentActiveIdx + 2,
@@ -471,27 +349,11 @@ export default function AutoDjPlayer({
     setLocalTracks(updated);
     if (onTracksChange) onTracksChange(updated);
 
-    // Immediately cue this track onto the opposite deck!
+    // Immediately cue onto the opposite deck
     if (activeDeck === "A") {
       setDeckBTrackIdx(nextIndex);
-      if (playerRefB.current && !checkIsMobile()) {
-        try {
-          playerRefB.current.cueVideoById({
-            videoId: newTrack.videoId,
-            startSeconds: newTrack.hookStart,
-          });
-        } catch {}
-      }
     } else {
       setDeckATrackIdx(nextIndex);
-      if (playerRefA.current && !checkIsMobile()) {
-        try {
-          playerRefA.current.cueVideoById({
-            videoId: newTrack.videoId,
-            startSeconds: newTrack.hookStart,
-          });
-        } catch {}
-      }
     }
 
     djFx.playAirhorn();
@@ -499,7 +361,6 @@ export default function AutoDjPlayer({
     setIsSearchModalOpen(false);
   };
 
-  // Append song to the end of the ceremony queue
   const addTrackToEndOfQueue = (track: any) => {
     const newTrack: AutoAuxTrack = {
       order: localTracks.length + 1,
@@ -588,14 +449,14 @@ export default function AutoDjPlayer({
       )}
 
       {/* ======================================================== */}
-      {/* INLINE STREAMING AUDIO ENGINES (PLAYSINLINE FOR MOBILE)  */}
+      {/* SINGLE MASTER YOUTUBE ENGINE (ZERO MOBILE DESYNC)        */}
       {/* ======================================================== */}
       <div
         className="fixed bottom-0 right-0 w-24 h-24 opacity-[0.001] pointer-events-none -z-50 overflow-hidden"
         aria-hidden="true"
       >
         <YouTube
-          videoId={trackA?.videoId || "eqqn1bPPp1M"}
+          videoId={activeTrack?.videoId || "eqqn1bPPp1M"}
           opts={{
             width: "100",
             height: "100",
@@ -605,57 +466,48 @@ export default function AutoDjPlayer({
               rel: 0,
               playsinline: 1,
               enablejsapi: 1,
-              start: trackA?.hookStart || 0,
+              start: activeTrack?.hookStart || 0,
+              modestbranding: 1,
+              fs: 0,
             },
           }}
           onReady={(event: any) => {
-            playerRefA.current = event.target;
+            playerRef.current = event.target;
             try {
-              event.target.setVolume(activeDeck === "A" ? 100 : 0);
-              event.target.seekTo(trackA?.hookStart || 0, true);
-              if (activeDeck === "A") event.target.playVideo();
+              event.target.setVolume(100);
+              event.target.seekTo(activeTrack?.hookStart || 0, true);
+              event.target.playVideo();
             } catch {}
           }}
           onStateChange={(e: any) => {
-            if (activeDeck === "A") {
-              if (e.data === 1) setIsPlaying(true);
-              else if (e.data === 2) setIsPlaying(false);
+            // e.data === 1: PLAYING
+            if (e.data === 1) {
+              setIsPlaying(true);
+              setHasStartedPlayback(true);
+            }
+            // e.data === 2: PAUSED
+            else if (e.data === 2) {
+              setIsPlaying(false);
+            }
+            // e.data === 0: ENDED (AUTO-ADVANCE TRIGGER)
+            else if (e.data === 0) {
+              if (!isCrossfadingRef.current) {
+                triggerCrossfade();
+              }
             }
           }}
-        />
-        <YouTube
-          videoId={trackB?.videoId || "hR8FEdC6aAs"}
-          opts={{
-            width: "100",
-            height: "100",
-            playerVars: {
-              autoplay: 1,
-              controls: 0,
-              rel: 0,
-              playsinline: 1,
-              enablejsapi: 1,
-              start: trackB?.hookStart || 0,
-            },
-          }}
-          onReady={(event: any) => {
-            playerRefB.current = event.target;
-            try {
-              event.target.setVolume(activeDeck === "B" ? 100 : 0);
-              event.target.seekTo(trackB?.hookStart || 0, true);
-              if (activeDeck === "B") event.target.playVideo();
-            } catch {}
-          }}
-          onStateChange={(e: any) => {
-            if (activeDeck === "B") {
-              if (e.data === 1) setIsPlaying(true);
-              else if (e.data === 2) setIsPlaying(false);
+          onError={() => {
+            // Auto-skip unplayable/copyright blocked songs so the music NEVER halts
+            showToast("Blending smoothly to next track...");
+            if (!isCrossfadingRef.current) {
+              triggerCrossfade();
             }
           }}
         />
       </div>
 
       {/* ======================================================== */}
-      {/* MOBILE TAP-TO-START BANNER (OVERCOMES AUTOPLAY RESTRICTION) */}
+      {/* MOBILE TAP-TO-START BANNER (OVERCOMES AUTOPLAY LOCKOUT)   */}
       {/* ======================================================== */}
       {!hasStartedPlayback && (
         <div className="rounded-2xl border border-amber-400/40 bg-gradient-to-r from-amber-950/70 via-[#181926] to-amber-900/40 p-4 sm:p-5 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-4 backdrop-blur-xl">
@@ -668,7 +520,7 @@ export default function AutoDjPlayer({
                 Audio Stream Ready • Tap to Unleash Mehfil Sound
               </h4>
               <p className="text-xs text-amber-200/80">
-                Optimized for phones &amp; speakers with zero-video bandwidth and instant DJ crossfade.
+                Optimized for phones &amp; speakers with zero-video bandwidth and continuous automated crossfade.
               </p>
             </div>
           </div>
@@ -686,7 +538,7 @@ export default function AutoDjPlayer({
       {/* AESTHETIC ANALOG TURNTABLE AUDIO CONSOLE                  */}
       {/* ======================================================== */}
       <div className="relative rounded-3xl sm:rounded-[2.5rem] border border-amber-500/20 bg-gradient-to-b from-[#10121a] via-[#0b0c13] to-[#07080e] p-4 sm:p-8 shadow-[0_20px_80px_rgba(0,0,0,0.85)] backdrop-blur-2xl overflow-hidden">
-        {/* Ambient Candlelight / Gold Glow Background */}
+        {/* Ambient Gold Glow Background */}
         <div className="pointer-events-none absolute -top-32 left-1/2 -translate-x-1/2 h-64 w-[600px] rounded-full bg-gradient-to-b from-amber-500/10 via-amber-700/5 to-transparent blur-3xl" />
 
         {/* Master Console Status Header */}
@@ -862,7 +714,7 @@ export default function AutoDjPlayer({
               </span>
             </div>
 
-            {/* Organic Audio Frequency Visualizer */}
+            {/* Sine Wave Frequency Visualizer */}
             <div className="rounded-2xl bg-black/60 border border-white/[0.06] p-3.5 text-center space-y-2">
               <div className="flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-slate-400">
                 <span>Phase Window:</span>
@@ -893,7 +745,7 @@ export default function AutoDjPlayer({
                   <span className="text-slate-300">Continuous Full Play</span>
                 ) : (
                   <span>
-                    Transition In <span className="text-amber-300 font-mono">{formatMinSecHuman(remainingSec)}</span>
+                    Auto-Blend In <span className="text-amber-300 font-mono">{formatMinSecHuman(remainingSec)}</span>
                   </span>
                 )}
               </p>
@@ -931,8 +783,8 @@ export default function AutoDjPlayer({
                   const rect = e.currentTarget.getBoundingClientRect();
                   const pos = Math.max(0, Math.min(100, Math.round(((e.clientX - rect.left) / rect.width) * 100)));
                   setCrossfader(pos);
-                  if (pos > 50 && activeDeck !== "B") setActiveDeck("B");
-                  else if (pos <= 50 && activeDeck !== "A") setActiveDeck("A");
+                  if (pos > 50 && activeDeck !== "B") triggerCrossfade();
+                  else if (pos <= 50 && activeDeck !== "A") triggerCrossfade();
                 }}
                 className="relative h-7 w-full rounded-full bg-black/90 border border-white/[0.12] p-1 flex items-center shadow-inner cursor-pointer select-none"
               >
@@ -1103,7 +955,7 @@ export default function AutoDjPlayer({
               </h3>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Bol Na Halke Halke (Instrumental), Nusrat Fateh Ali Khan, Ali Sethi, Kaifi Khalil &amp; Classical Coke Studio
+              Bol Na Halke Halke (Instrumental), Nusrat Remixes, Kudmayi, Kaifi Khalil &amp; Classical Coke Studio
             </p>
           </div>
 
@@ -1121,7 +973,7 @@ export default function AutoDjPlayer({
               <span>Add From YouTube</span>
             </button>
             <span className="rounded-full bg-white/[0.04] border border-white/[0.08] px-3 py-1.5 text-xs font-mono text-slate-300 hidden sm:inline-block">
-              Zero Video Overhead
+              Continuous Auto-Blend
             </span>
           </div>
         </div>
@@ -1305,7 +1157,7 @@ export default function AutoDjPlayer({
                   autoFocus
                   value={ytSearchQuery}
                   onChange={(e) => setYtSearchQuery(e.target.value)}
-                  placeholder="Enter song name, artist, or YouTube query (e.g. Kaifi Khalil, Nusrat live)..."
+                  placeholder="Enter song name, artist, or YouTube query (e.g. Kaifi Khalil, Nusrat remix)..."
                   className="w-full rounded-2xl border border-white/[0.12] bg-black/70 pl-10 pr-4 py-3 text-xs sm:text-sm text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none transition"
                 />
               </div>
@@ -1327,11 +1179,11 @@ export default function AutoDjPlayer({
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[10px] font-mono uppercase text-slate-500 mr-1">Trending:</span>
               {[
-                "Nusrat Fateh Ali Khan Live",
+                "Nusrat Fateh Ali Khan Remix",
                 "Kahani Suno 2.0 Kaifi",
+                "Kudmayi Rocky Aur Rani",
                 "Ali Sethi Ghazal",
                 "Coke Studio Sufi",
-                "Bollywood Wedding Remix",
               ].map((chip) => (
                 <button
                   key={chip}
