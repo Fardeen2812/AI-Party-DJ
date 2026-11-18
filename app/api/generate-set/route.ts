@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
         const prompt = `You are AutoAux, an elite Royal Engagement Ceremony DJ specializing in Classical Coke Studio, Sufi ghazals, Ali Sethi, Garvit-Priyansh, and Zain Zohaib acoustic music.
 Generate a strict JSON array of songs matching: "${vibe}".
 Order them in an ascending energy progression from entrance blessings to romantic ring ceremony and joyful sangeet.
-Include beloved favorites like Bol Na Halke Halke, Gulon Main Rang, Kaafi Hai Na, Kaahe Mose, Alfaaz, Tu Jhoom, Pasoori, and Faasle where appropriate.
+Include beloved favorites like Bol Na Halke Halke (Flute Instrumental), Gulon Main Rang, Kaafi Hai Na, Kaahe Mose, Alfaaz, Tu Jhoom, Pasoori, Kahani Suno 2.0, Latthay Di Chaadar, Ye Jo Halka Halka Suroor (Nusrat), Kali Kali Zulfon (Nusrat), Mera Piya Ghar Aaya (Nusrat), Dam Mast Qalandar (Nusrat), and Faasle where appropriate.
 Each item must have:
 - "title": exact song name
 - "artist": primary performer
